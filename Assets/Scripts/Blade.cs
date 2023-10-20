@@ -1,98 +1,63 @@
 using UnityEngine;
 using System.Net.Sockets;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Collections.Generic;
 
-public class YarpNetwork
+
+public class CircularBuffer
 {
-    int serverPort = 10000;
-    string serverIp = "127.0.0.1";
+    private float[] buffer;
+    public int size { get; private set; }
+    private int head;
+    private int tail;
 
-
-    public void TcpSend(string msg, NetworkStream stream)
+    public CircularBuffer(int capacity)
     {
-        byte[] message = System.Text.Encoding.ASCII.GetBytes(msg);
-        stream.Write(message, 0, message.Length);
+        size = capacity;
+        buffer = new float[capacity];
+        head = 0;
+        tail = 0;
     }
 
-    public string TcpReceive(NetworkStream stream, int bufSize = 1024)
+    public void Enqueue(float item)
     {
-        byte[] bytesToRead = new byte[bufSize];
-        int bytesRead = 0;
-        try
+        buffer[tail] = item;
+        tail = (tail + 1) % size;
+        if (tail == head)
         {
-            bytesRead = stream.Read(bytesToRead, 0, bufSize);
-        } catch (System.IO.IOException e) {
-            Debug.Log("AAAAAA");
+            head = (head + 1) % size;
         }
-        return Encoding.ASCII.GetString(bytesToRead, 0, bytesRead);
     }
 
-    private NetworkStream getPortStream(string ip, int port)
+    public float Dequeue()
     {
-
-        TcpClient tcpClient = new TcpClient();
-        if (!tcpClient.ConnectAsync(ip, port).Wait(1000))
+        if (IsEmpty())
         {
-            throw new System.Exception("Could not find YARP server.");
+            throw new System.Exception("Buffer is empty");
         }
-        NetworkStream stream = tcpClient.GetStream();
-
-        TcpSend("CONNECT unity\n", stream);
-        string reply = TcpReceive(stream);
-        if (!reply.StartsWith("Welcome unity"))
-        {
-            throw new System.Exception("Could not connect to port " + port + "on address " + ip);
-        }
-
-        stream.ReadTimeout = 1000;
-        stream.WriteTimeout = 1000;
-
-        return stream;
+        float item = buffer[head];
+        head = (head + 1) % size;
+        return item;
     }
 
-    public NetworkStream connectToPort(string portName)
+    public bool IsEmpty()
     {
-        NetworkStream serverStream = getPortStream(serverIp, serverPort);
-        TcpSend("d\n", serverStream);
-        TcpSend("list\n", serverStream);
+        return head == tail;
+    }
 
-        string list = TcpReceive(serverStream);
+    public bool IsFull()
+    {
+        return (tail + 1) % size == head;
+    }
 
-        MatchCollection matches = Regex.Matches(list, @"(\/.+) ip (\d+.\d+.\d+.\d+) port (\d+)");
-
-        string portIp = string.Empty;
-        int portPort=10000;
-        bool found = false;
-        List<string> availablePorts = new List<string>();
-        foreach (Match match in matches)
-        {
-            GroupCollection groups = match.Groups;
-            string name = groups[1].ToString();
-            availablePorts.Add(name);
-            portIp = groups[2].ToString();
-            portPort = int.Parse(groups[3].ToString());
-            if (name.Equals(portName))
-            {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found){
-            throw new System.Exception("Could not find port with name" + portName + 
-                ". Available ports are" + string.Join(" ", availablePorts));
-        }
-
-        NetworkStream portStream = getPortStream(serverIp, portPort);
-        TcpSend("r\n", portStream);
-        return portStream;
-
+    public float Average()
+    {
+        float avg = 0;
+        foreach (var item in buffer) avg += item;
+        return avg / size;
     }
 }
-
 public class Blade : MonoBehaviour
 {
     public Vector3 direction { get; private set; }
@@ -115,7 +80,7 @@ public class Blade : MonoBehaviour
     private void Awake()
     {
         yarp = new YarpNetwork();
-        skeletonPortStream = yarp.connectToPort("/file/ch2GT50Hzskeleton:o");
+        skeletonPortStream = yarp.connectToPort("/edpr_april/sklt:o");
         sliceCollider = GetComponent<Collider>();
         sliceTrail = GetComponentInChildren<TrailRenderer>();
         readingThread = new Thread(ReadPort);
@@ -139,27 +104,38 @@ public class Blade : MonoBehaviour
         if (isRightHand)
         {
             index = 14;
-        } else
+        }
+        else
         {
             index = 16;
         }
+        CircularBuffer last_xs = new CircularBuffer(5);
+        CircularBuffer last_ys = new CircularBuffer(5);
         while (Thread.CurrentThread.IsAlive)
         {
             string msg = yarp.TcpReceive(skeletonPortStream);
             if (msg.Length == 0) continue;
             MatchCollection matches = Regex.Matches(msg, @"SKLT \((.*)\)");
-
+            if (matches.Count == 0) continue;
             string[] skeleton = matches[0].Groups[1].ToString().Split(' ');
-            handPosition.x = ((float.Parse(skeleton[index]) / imageResoultion.x) - 0.5f) * 40;
-            handPosition.y = ((float.Parse(skeleton[index + 1]) / imageResoultion.y) - 0.5f) * -20;
+            var x = ((float.Parse(skeleton[index]) / imageResoultion.x) - 0.5f) * -40;
+            var y = ((float.Parse(skeleton[index + 1]) / imageResoultion.y) - 0.5f) * -20;
+            //Debug.Log(Vector2.Distance(new Vector2(x, y), new Vector2(handPosition.x, handPosition.y)));
+            last_xs.Enqueue(x);
+            last_ys.Enqueue(y);
+            handPosition.x = last_xs.Average();
+            handPosition.y = last_ys.Average();
         }
     }
 
     private void Update()
     {
-        if (!slicing) {
+        if (!slicing)
+        {
             StartSlice();
-        } else {
+        }
+        else
+        {
             ContinueSlice();
         }
     }
