@@ -80,12 +80,19 @@ public class Blade : MonoBehaviour
     private void Awake()
     {
         yarp = new YarpNetwork();
-        skeletonPortStream = yarp.connectToPort("/edpr_april/sklt:o");
+        try
+        {
+            skeletonPortStream = yarp.connectToPort("/edpr_april/sklt:o");
+            readingThread = new Thread(ReadPort);
+            readingThread.Start();
+            StartSlice();
+        } catch(System.Exception e)
+        {
+            Debug.Log(e.ToString());
+        }
+
         sliceCollider = GetComponent<Collider>();
         sliceTrail = GetComponentInChildren<TrailRenderer>();
-        readingThread = new Thread(ReadPort);
-        readingThread.Start();
-        StartSlice();
     }
 
     private void OnEnable()
@@ -109,8 +116,8 @@ public class Blade : MonoBehaviour
         {
             index = 16;
         }
-        CircularBuffer last_xs = new CircularBuffer(5);
-        CircularBuffer last_ys = new CircularBuffer(5);
+        CircularBuffer last_xs = new CircularBuffer(10);
+        CircularBuffer last_ys = new CircularBuffer(10);
         while (Thread.CurrentThread.IsAlive)
         {
             string msg = yarp.TcpReceive(skeletonPortStream);
