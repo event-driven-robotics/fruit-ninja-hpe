@@ -23,8 +23,15 @@ public class Spawner : MonoBehaviour
     private void Awake()
     {
         spawnArea = GetComponent<Collider>();
+
+        InvokeRepeating("increaseBombChance", 1, 1);
     }
 
+
+    private void increaseBombChance()
+    {
+        bombChance += 0.01f;
+    }
     private void OnEnable()
     {
         StartCoroutine(Spawn());
@@ -46,7 +53,6 @@ public class Spawner : MonoBehaviour
             if (Random.value < bombChance) {
                 prefab = bombPrefab;
             }
-
             Vector3 position = new Vector3();
             position.x = Random.Range(spawnArea.bounds.min.x, spawnArea.bounds.max.x);
             position.y = Random.Range(spawnArea.bounds.min.y, spawnArea.bounds.max.y);

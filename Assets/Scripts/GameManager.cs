@@ -7,15 +7,15 @@ public class GameManager : MonoBehaviour
     public Text scoreText;
     public Image fadeImage;
 
-    private Blade blade;
-    private Spawner spawner;
+    private Blade[] blades;
+    private Spawner[] spawners;
 
     private int score;
 
     private void Awake()
     {
-        blade = FindObjectOfType<Blade>();
-        spawner = FindObjectOfType<Spawner>();
+        blades = FindObjectsOfType<Blade>();
+        spawners = FindObjectsOfType<Spawner>();
     }
 
     private void Start()
@@ -28,9 +28,15 @@ public class GameManager : MonoBehaviour
         Time.timeScale = 1f;
 
         ClearScene();
-
-        blade.enabled = true;
-        spawner.enabled = true;
+        foreach (var blade in blades)
+        {
+            blade.enabled = true;
+        }
+        foreach (var spawner in spawners)
+        {
+            spawner.enabled = true;
+            spawner.bombChance = 0.05f;
+        }
 
         score = 0;
         scoreText.text = score.ToString();
@@ -59,8 +65,15 @@ public class GameManager : MonoBehaviour
 
     public void Explode()
     {
-        blade.enabled = false;
-        spawner.enabled = false;
+        foreach (var blade in blades)
+        {
+            blade.enabled = false;
+
+        }
+        foreach (var spawner in spawners)
+        {
+            spawner.enabled = false;
+        }
 
         StartCoroutine(ExplodeSequence());
     }

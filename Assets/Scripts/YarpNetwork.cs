@@ -20,8 +20,7 @@ public class YarpNetwork
     {
 
         byte[] bytesToRead = new byte[bufSize];
-        int bytesRead = 0;
-        bytesRead = stream.Read(bytesToRead, 0, bufSize);
+        int bytesRead = stream.Read(bytesToRead, 0, bufSize);
         return Encoding.ASCII.GetString(bytesToRead, 0, bytesRead);
     }
 

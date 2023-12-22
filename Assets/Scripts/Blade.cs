@@ -71,28 +71,44 @@ public class Blade : MonoBehaviour
     public Vector2 imageResoultion = new Vector2(640, 480);
 
     private bool slicing;
+    private bool isSkeletonPortConnected = false;
+    private bool killFlag = false;
 
     Vector3 handPosition;
     YarpNetwork yarp;
     NetworkStream skeletonPortStream;
     Thread readingThread;
+    Thread connectionThread;
 
     private void Awake()
     {
         yarp = new YarpNetwork();
-        try
-        {
-            skeletonPortStream = yarp.connectToPort("/edpr_april/sklt:o");
-            readingThread = new Thread(ReadPort);
-            readingThread.Start();
-            StartSlice();
-        } catch(System.Exception e)
-        {
-            Debug.Log(e.ToString());
-        }
-
         sliceCollider = GetComponent<Collider>();
         sliceTrail = GetComponentInChildren<TrailRenderer>();
+        connectionThread = new Thread(ConnectionAttemptLoop);
+        connectionThread.Start();
+    }
+
+    private void ConnectionAttemptLoop()
+    {
+        while (!isSkeletonPortConnected)
+        {
+            if (killFlag) return;
+            try
+            {
+                skeletonPortStream = yarp.connectToPort("/edpr_april/sklt:o");
+                skeletonPortStream.ReadTimeout = 1000;
+                isSkeletonPortConnected = true;
+            }
+            catch (System.Exception e)
+            {
+                Debug.Log("Could not connect to port /edpr_april/sklt:o. Please verify that yarp is up and port exists.");
+                Thread.Sleep(1000);
+            }
+        }
+        readingThread = new Thread(ReadPort);
+        readingThread.Start();
+
     }
 
     private void OnEnable()
@@ -116,27 +132,50 @@ public class Blade : MonoBehaviour
         {
             index = 16;
         }
-        CircularBuffer last_xs = new CircularBuffer(10);
-        CircularBuffer last_ys = new CircularBuffer(10);
+        CircularBuffer last_xs = new CircularBuffer(5);
+        CircularBuffer last_ys = new CircularBuffer(5);
         while (Thread.CurrentThread.IsAlive)
         {
-            string msg = yarp.TcpReceive(skeletonPortStream);
-            if (msg.Length == 0) continue;
-            MatchCollection matches = Regex.Matches(msg, @"SKLT \((.*)\)");
-            if (matches.Count == 0) continue;
-            string[] skeleton = matches[0].Groups[1].ToString().Split(' ');
-            var x = ((float.Parse(skeleton[index]) / imageResoultion.x) - 0.5f) * -40;
-            var y = ((float.Parse(skeleton[index + 1]) / imageResoultion.y) - 0.5f) * -20;
-            //Debug.Log(Vector2.Distance(new Vector2(x, y), new Vector2(handPosition.x, handPosition.y)));
-            last_xs.Enqueue(x);
-            last_ys.Enqueue(y);
-            handPosition.x = last_xs.Average();
-            handPosition.y = last_ys.Average();
+            if (killFlag) break;
+            try
+            {
+                string msg = yarp.TcpReceive(skeletonPortStream);
+                if (msg.Length == 0)
+                {
+                    connectionThread.Join();
+                    isSkeletonPortConnected = false;
+                    connectionThread = new Thread(ConnectionAttemptLoop);
+                    connectionThread.Start();
+                    return;
+                }
+                MatchCollection matches = Regex.Matches(msg, @"SKLT \((.*)\)");
+                if (matches.Count == 0) continue;
+                string[] skeleton = matches[0].Groups[1].ToString().Split(' ');
+                var x = ((float.Parse(skeleton[index]) / imageResoultion.x) - 0.5f) * -26.6f; // TODO make this relative to aspect ratio
+                var y = ((float.Parse(skeleton[index + 1]) / imageResoultion.y) - 0.5f) * -20;
+
+                //Debug.Log(Vector2.Distance(new Vector2(x, y), new Vector2(handPosition.x, handPosition.y)));
+                last_xs.Enqueue(x);
+                last_ys.Enqueue(y);
+                handPosition.x = last_xs.Average();
+                handPosition.y = last_ys.Average();
+            }
+            catch (System.IO.IOException e)
+            {
+                Thread.Sleep(1000);
+                continue;
+            }
+
         }
     }
 
     private void Update()
     {
+        if (!isSkeletonPortConnected)
+        {
+            StopSlice();
+            return;
+        }
         if (!slicing)
         {
             StartSlice();
@@ -181,8 +220,17 @@ public class Blade : MonoBehaviour
 
     private void OnApplicationQuit()
     {
-        readingThread.Abort();
-        readingThread.Join();
+        killFlag = true;
+        try
+        {
+            connectionThread.Join();
+        }
+        catch (System.NullReferenceException e) { }
+        try
+        {
+            readingThread.Join();
+        }
+        catch (System.NullReferenceException e) { }
     }
 
 }
