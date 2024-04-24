@@ -81,7 +81,7 @@ public class YarpNetwork
                 ". Available ports are: " + string.Join(", ", availablePorts));
         }
 
-        NetworkStream portStream = getPortStream(serverIp, portPort);
+        NetworkStream portStream = getPortStream(portIp, portPort);
         TcpSend("r\n", portStream);
         return portStream;
 
