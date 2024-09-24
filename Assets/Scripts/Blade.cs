@@ -2,7 +2,7 @@ using UnityEngine;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Threading;
-using System.Collections.Generic;
+using System.Linq;
 
 
 public class CircularBuffer
@@ -53,9 +53,20 @@ public class CircularBuffer
 
     public float Average()
     {
-        float avg = 0;
-        foreach (var item in buffer) avg += item;
-        return avg / size;
+        var sortedData = buffer.OrderBy(x => x).ToArray();
+        int q1Index = (int)(0.25 * (sortedData.Length - 1));
+        int q3Index = (int)(0.75 * (sortedData.Length - 1));
+
+        double q1 = sortedData[q1Index];
+        double q3 = sortedData[q3Index];
+        double iqr = q3 - q1;
+
+        double lowerBound = q1 - 1.5 * iqr;
+        double upperBound = q3 + 1.5 * iqr;
+
+        var filteredData = sortedData.Where(x => x >= lowerBound && x <= upperBound).ToArray();
+
+        return sortedData.Average();
     }
 }
 public class Blade : MonoBehaviour
@@ -67,6 +78,7 @@ public class Blade : MonoBehaviour
 
     public float sliceForce = 5f;
     public float minSliceVelocity = 0.01f;
+    public int bufferSize = 5;
     public bool isRightHand = true;
     public Vector2 imageResoultion = new Vector2(640, 480);
 
@@ -132,11 +144,16 @@ public class Blade : MonoBehaviour
         {
             index = 16;
         }
-        CircularBuffer last_xs = new CircularBuffer(5);
-        CircularBuffer last_ys = new CircularBuffer(5);
+        CircularBuffer last_xs = new CircularBuffer(bufferSize);
+        CircularBuffer last_ys = new CircularBuffer(bufferSize);
         while (Thread.CurrentThread.IsAlive)
         {
             if (killFlag) break;
+            if (last_xs.size != bufferSize)
+            {
+                last_xs = new CircularBuffer(bufferSize);
+                last_ys = new CircularBuffer(bufferSize);
+            }
             try
             {
                 string msg = yarp.TcpReceive(skeletonPortStream);
