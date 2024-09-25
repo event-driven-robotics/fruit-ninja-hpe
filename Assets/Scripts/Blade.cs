@@ -3,75 +3,67 @@ using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Linq;
+using Unity.Collections;
 
 
-public class CircularBuffer
+public class CircularBuffer<T>
 {
-    private float[] buffer;
+    private T[] buffer;
     public int size { get; private set; }
-    private int head;
     private int tail;
 
     public CircularBuffer(int capacity)
     {
         size = capacity;
-        buffer = new float[capacity];
-        head = 0;
+        buffer = new T[capacity];
         tail = 0;
     }
 
-    public void Enqueue(float item)
+    public void Enqueue(T item)
     {
         buffer[tail] = item;
         tail = (tail + 1) % size;
-        if (tail == head)
+    }
+    
+    public T [] GetLastN(int n)
+    {
+        
+        T[] output = new T[n];
+        for (int i = 0; i < n; i++)
         {
-            head = (head + 1) % size;
+            output[i] = buffer[(tail + i) % size];
         }
-    }
+        return output;
 
-    public float Dequeue()
-    {
-        if (IsEmpty())
-        {
-            throw new System.Exception("Buffer is empty");
-        }
-        float item = buffer[head];
-        head = (head + 1) % size;
-        return item;
-    }
-
-    public bool IsEmpty()
-    {
-        return head == tail;
-    }
-
-    public bool IsFull()
-    {
-        return (tail + 1) % size == head;
     }
 
     public float Average()
     {
-        var sortedData = buffer.OrderBy(x => x).ToArray();
+        if (typeof(T) != typeof(float))
+        {
+            throw new System.TypeAccessException("T must be float");
+        }
+        float [] floatvalues = new float[buffer.Length];
+        floatvalues = buffer.Cast<float>().ToArray();
+        float[] sortedData = floatvalues.OrderBy(x => x).ToArray();
         int q1Index = (int)(0.25 * (sortedData.Length - 1));
         int q3Index = (int)(0.75 * (sortedData.Length - 1));
 
-        double q1 = sortedData[q1Index];
-        double q3 = sortedData[q3Index];
-        double iqr = q3 - q1;
+        float q1 = sortedData[q1Index];
+        float q3 = sortedData[q3Index];
+        float iqr = q3 - q1;
 
-        double lowerBound = q1 - 1.5 * iqr;
-        double upperBound = q3 + 1.5 * iqr;
+        float lowerBound = q1 - 1.5f * iqr;
+        float upperBound = q3 + 1.5f * iqr;
 
         var filteredData = sortedData.Where(x => x >= lowerBound && x <= upperBound).ToArray();
 
-        return sortedData.Average();
+        return filteredData.Average();
     }
 }
 public class Blade : MonoBehaviour
 {
-    public Vector3 direction { get; private set; }
+    public Vector3 velocity { get; private set; }
 
     private Collider sliceCollider;
     private TrailRenderer sliceTrail;
@@ -86,6 +78,10 @@ public class Blade : MonoBehaviour
     private bool isSkeletonPortConnected = false;
     private bool killFlag = false;
 
+    private CircularBuffer<float> last_xs;
+    private CircularBuffer<float> last_ys;
+    private CircularBuffer<System.DateTime> last_timestamps;
+    
     Vector3 handPosition;
     YarpNetwork yarp;
     NetworkStream skeletonPortStream;
@@ -97,6 +93,9 @@ public class Blade : MonoBehaviour
         yarp = new YarpNetwork();
         sliceCollider = GetComponent<Collider>();
         sliceTrail = GetComponentInChildren<TrailRenderer>();
+        last_xs = new CircularBuffer<float>(bufferSize);
+        last_ys = new CircularBuffer<float>(bufferSize);
+        last_timestamps = new CircularBuffer<System.DateTime>(bufferSize);
         connectionThread = new Thread(ConnectionAttemptLoop);
         connectionThread.Start();
     }
@@ -144,15 +143,14 @@ public class Blade : MonoBehaviour
         {
             index = 16;
         }
-        CircularBuffer last_xs = new CircularBuffer(bufferSize);
-        CircularBuffer last_ys = new CircularBuffer(bufferSize);
+
         while (Thread.CurrentThread.IsAlive)
         {
             if (killFlag) break;
             if (last_xs.size != bufferSize)
             {
-                last_xs = new CircularBuffer(bufferSize);
-                last_ys = new CircularBuffer(bufferSize);
+                last_xs = new CircularBuffer<float>(bufferSize);
+                last_ys = new CircularBuffer<float>(bufferSize);
             }
             try
             {
@@ -174,6 +172,7 @@ public class Blade : MonoBehaviour
                 //Debug.Log(Vector2.Distance(new Vector2(x, y), new Vector2(handPosition.x, handPosition.y)));
                 last_xs.Enqueue(x);
                 last_ys.Enqueue(y);
+                last_timestamps.Enqueue(System.DateTime.Now);
                 handPosition.x = last_xs.Average();
                 handPosition.y = last_ys.Average();
             }
@@ -224,15 +223,26 @@ public class Blade : MonoBehaviour
 
     private void ContinueSlice()
     {
-        Vector3 newPosition = handPosition;
-        newPosition.z = 0f;
+        float[] xs = last_xs.GetLastN(5);
+        float[] ys = last_ys.GetLastN(5);
+        System.DateTime[] timestamps = last_timestamps.GetLastN(5);
+        
+        // Using the 5-point derivative formula
+        // double h1 = timestamps[1] - timestamps[0];
+        double h2 = (timestamps[2] - timestamps[1]).TotalSeconds;
+        double h3 = (timestamps[3] - timestamps[2]).TotalSeconds;
+        // double h4 = timestamps[4] - timestamps[3];
 
-        direction = newPosition - transform.position;
-
-        float velocity = direction.magnitude / Time.deltaTime;
+        double Vx = (-xs[4] + 8 * xs[3] - 8 * xs[1] + xs[0]) / (6 * (h2 + h3));
+        double Vy = (-ys[4] + 8 * ys[3] - 8 * ys[1] + ys[0]) / (6 * (h2 + h3));
+        
+        this.velocity = new Vector3((float)Vx, (float)Vy, 0);
+            
+        float velocity = this.velocity.magnitude;
         sliceCollider.enabled = velocity > minSliceVelocity;
-
-        transform.position = newPosition;
+        
+        handPosition.z = 0f;
+        transform.position = handPosition;
     }
 
     private void OnApplicationQuit()
